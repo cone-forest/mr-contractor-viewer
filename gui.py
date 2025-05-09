@@ -15,9 +15,10 @@ from PyQt5.QtGui import QPixmap, QFont
 try:
     from dot2mr import format_structure, generate_component_structure
     from mr2dot import parse_custom_format as parse_mr, convert_to_dot
+    from dot_to_mermaid import dot_to_mermaid, mermaid_to_dot
 except ImportError as e:
     print(f"Error importing conversion modules: {e}")
-    print("Make sure dot2mr.py and mr2dot.py are in the same directory as this script.")
+    print("Make sure dot2mr.py, mr2dot.py, and dot_to_mermaid.py are in the same directory as this script.")
     sys.exit(1)
 
 class GraphConverterApp(QMainWindow):
@@ -58,19 +59,18 @@ class GraphConverterApp(QMainWindow):
         self.upper_splitter.addWidget(self.custom_format_widget)
         self.upper_splitter.addWidget(self.dot_format_widget)
 
-        # Add widgets to the lower splitter (Work in Progress and Rendered Graph)
-        self.wip_widget = QWidget()
-        self.wip_layout = QVBoxLayout(self.wip_widget)
-        self.wip_label = QLabel("Work In Progress")
-        self.wip_label.setAlignment(Qt.AlignCenter)
-        self.wip_layout.addWidget(self.wip_label)
+        # Add widgets to the lower splitter (Mermaid Format and Rendered Graph)
+        self.mermaid_widget = QWidget()
+        self.mermaid_layout = QVBoxLayout(self.mermaid_widget)
+        self.mermaid_label = QLabel("Mermaid Format")
+        self.mermaid_layout.addWidget(self.mermaid_label)
 
         self.graph_widget = QWidget()
         self.graph_layout = QVBoxLayout(self.graph_widget)
         self.graph_label = QLabel("Rendered Graph")
         self.graph_layout.addWidget(self.graph_label)
 
-        self.lower_splitter.addWidget(self.wip_widget)
+        self.lower_splitter.addWidget(self.mermaid_widget)
         self.lower_splitter.addWidget(self.graph_widget)
 
         # Add the splitter to the main layout
@@ -121,11 +121,11 @@ class GraphConverterApp(QMainWindow):
         self.dot_text.textChanged.connect(lambda: self.text_changed("dot"))
         self.dot_format_layout.addWidget(self.dot_text)
 
-        # Set up the "Work In Progress" section
-        wip_content = QLabel("Work In Progress")
-        wip_content.setAlignment(Qt.AlignCenter)
-        wip_content.setStyleSheet("font-size: 24px; color: gray;")
-        self.wip_layout.addWidget(wip_content)
+        # Set up the Mermaid format section
+        self.mermaid_text = QPlainTextEdit()
+        self.mermaid_text.setFont(QFont("Monospace", 10))
+        self.mermaid_text.textChanged.connect(lambda: self.text_changed("mermaid"))
+        self.mermaid_layout.addWidget(self.mermaid_text)
 
         # Set up the graph visualization section
         self.graph_scroll = QScrollArea()
@@ -157,34 +157,41 @@ class GraphConverterApp(QMainWindow):
 
         self.is_updating = True
         try:
+            # Handle conversion based on which editor was last updated
             if self.last_updated == "custom":
                 # Convert custom format to DOT
                 custom_text = self.custom_text.toPlainText()
                 if not custom_text.strip():
                     self.dot_text.setPlainText("")
+                    self.mermaid_text.setPlainText("")
                     self.clear_graph()
                     self.is_updating = False
                     return
 
                 try:
-                    # Parse and convert
+                    # Parse and convert to DOT
                     tree = parse_mr(custom_text)
                     dot_content = convert_to_dot(tree)
-
+                    
                     # Update DOT text
                     self.dot_text.setPlainText(dot_content)
-
+                    
+                    # Convert DOT to Mermaid
+                    mermaid_content = dot_to_mermaid(dot_content)
+                    self.mermaid_text.setPlainText(mermaid_content)
+                    
                     # Render the graph
                     self.render_graph(dot_content)
                 except Exception as e:
-                    self.show_error(f"Error converting custom format to DOT: {str(e)}")
+                    self.show_error(f"Error converting custom format: {str(e)}")
                     traceback.print_exc()
 
             elif self.last_updated == "dot":
-                # Convert DOT to custom format
+                # Convert DOT to custom format and Mermaid
                 dot_text = self.dot_text.toPlainText()
                 if not dot_text.strip():
                     self.custom_text.setPlainText("")
+                    self.mermaid_text.setPlainText("")
                     self.clear_graph()
                     self.is_updating = False
                     return
@@ -193,8 +200,15 @@ class GraphConverterApp(QMainWindow):
                     # Write DOT content to temp file for processing
                     with open(self.dot_file_path, 'w') as f:
                         f.write(dot_text)
-
-                    # Use dot2mr.py to convert
+                    
+                    # Convert DOT to Mermaid
+                    try:
+                        mermaid_content = dot_to_mermaid(dot_text)
+                        self.mermaid_text.setPlainText(mermaid_content)
+                    except Exception as e:
+                        self.show_error(f"Error converting DOT to Mermaid: {str(e)}")
+                    
+                    # Convert DOT to custom format
                     try:
                         # Import the graph with pygraphviz
                         import pygraphviz as pgv
@@ -229,12 +243,69 @@ class GraphConverterApp(QMainWindow):
                     except Exception as e:
                         self.show_error(f"Error converting DOT to custom format: {str(e)}")
                         traceback.print_exc()
-
+                    
                     # Always render the graph if DOT format seems valid
                     self.render_graph(dot_text)
-
+                    
                 except Exception as e:
                     self.show_error(f"Error processing DOT format: {str(e)}")
+                    traceback.print_exc()
+                    
+            elif self.last_updated == "mermaid":
+                # Convert Mermaid to DOT, then to custom format
+                mermaid_text = self.mermaid_text.toPlainText()
+                if not mermaid_text.strip():
+                    self.custom_text.setPlainText("")
+                    self.dot_text.setPlainText("")
+                    self.clear_graph()
+                    self.is_updating = False
+                    return
+                
+                try:
+                    # Convert Mermaid to DOT
+                    dot_content = mermaid_to_dot(mermaid_text)
+                    self.dot_text.setPlainText(dot_content)
+                    
+                    # Write DOT content to temp file for custom format conversion
+                    with open(self.dot_file_path, 'w') as f:
+                        f.write(dot_content)
+                    
+                    # Convert DOT to custom format
+                    try:
+                        import pygraphviz as pgv
+                        import networkx as nx
+
+                        graph = pgv.AGraph(self.dot_file_path)
+                        nx_graph = nx.nx_agraph.from_agraph(graph)
+
+                        components = list(nx.algorithms.components.weakly_connected_components(nx_graph))
+
+                        component_structures = []
+                        for component in components:
+                            subgraph = nx_graph.subgraph(component)
+                            component_struct = generate_component_structure(subgraph)
+                            component_structures.append(component_struct)
+
+                        if len(component_structures) > 1:
+                            final_structure = {'type': 'Parallel', 'children': component_structures}
+                        elif len(component_structures) == 1:
+                            final_structure = component_structures[0]
+                        else:
+                            final_structure = None
+
+                        if final_structure:
+                            custom_content = format_structure(final_structure)
+                            self.custom_text.setPlainText(custom_content)
+
+                    except Exception as e:
+                        self.show_error(f"Error converting Mermaid to custom format: {str(e)}")
+                        traceback.print_exc()
+                    
+                    # Render the graph
+                    self.render_graph(dot_content)
+                    
+                except Exception as e:
+                    self.show_error(f"Error converting Mermaid format: {str(e)}")
                     traceback.print_exc()
 
         except Exception as e:
